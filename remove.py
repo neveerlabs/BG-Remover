@@ -48,7 +48,7 @@ class BackgroundRemoverApp:
         main_frame = Frame(self.root, padx=20, pady=20)
         main_frame.pack(fill="both", expand=True)
 
-        title = Label(main_frame, text="Background Remover Pro",
+        title = Label(main_frame, text="Background Remover",
                       font=("Segoe UI", 18, "bold"), fg="#2c3e50")
         title.pack(pady=(0, 10))
 
