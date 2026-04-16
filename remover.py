@@ -18,60 +18,73 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Union, Any, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 os.environ["PYTHONWARNINGS"] = "ignore"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["ONNX_RUNTIME_EXECUTION_MODE"] = "sequential"
+
 try:
     import customtkinter as ctk
     from customtkinter import CTk, CTkFrame, CTkButton, CTkLabel, CTkProgressBar, CTkOptionMenu, CTkEntry, CTkScrollableFrame, CTkTextbox, CTkSwitch, CTkSlider
     CTK_AVAILABLE = True
 except ImportError:
     CTK_AVAILABLE = False
-import tkinter as tk
-from tkinter import ttk
+    import tkinter as tk
+    from tkinter import ttk
+
 from tkinter import filedialog, messagebox
+
 try:
     from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageEnhance, ImageOps
     import numpy as np
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
+
 try:
     import cv2
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
+
 try:
     from rembg import remove, new_session, sessions
     REMBG_AVAILABLE = True
 except ImportError:
     REMBG_AVAILABLE = False
+
 try:
     from scipy import ndimage
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
+
 try:
     from skimage import restoration, filters, morphology, segmentation
     SKIMAGE_AVAILABLE = True
 except ImportError:
     SKIMAGE_AVAILABLE = False
+
 log_queue = queue.Queue()
 _logger_initialized = False
 _root_logger = None
+
 class SystemLogger:
     _instance = None
     _lock = threading.Lock()
+    
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
         return cls._instance
+    
     def __init__(self):
         if hasattr(self, '_initialized'):
             return
@@ -80,6 +93,7 @@ class SystemLogger:
         atexit.register(self._cleanup)
         self._flush_thread = threading.Thread(target=self._flush_worker, daemon=True)
         self._flush_thread.start()
+    
     def _setup_logging(self):
         global _root_logger
         self.logger = logging.getLogger("BGRemoverPro")
@@ -96,6 +110,7 @@ class SystemLogger:
         global _logger_initialized
         _logger_initialized = True
         self.log("System logger initialized (console only)", "INFO")
+    
     def log(self, message: str, level: str = "INFO"):
         level_upper = level.upper()
         if level_upper == "DEBUG":
@@ -111,6 +126,7 @@ class SystemLogger:
         else:
             self.logger.info(message)
         log_queue.put((message, level_upper))
+    
     def _flush_worker(self):
         while True:
             time.sleep(0.1)
@@ -119,14 +135,19 @@ class SystemLogger:
                     log_queue.get_nowait()
             except queue.Empty:
                 pass
+    
     def _cleanup(self):
         self.log("System logger shutting down", "INFO")
         for handler in self.logger.handlers:
             handler.flush()
             handler.close()
+
+
 system_logger = SystemLogger()
 LOG = system_logger.log
+
 LOG("Application bootstrap initiated", "INFO")
+
 def _check_and_install_dependencies():
     missing_pkgs = []
     if not PIL_AVAILABLE:
@@ -141,13 +162,16 @@ def _check_and_install_dependencies():
         missing_pkgs.append("scikit-image")
     if not CTK_AVAILABLE:
         missing_pkgs.append("customtkinter")
+    
     if missing_pkgs:
         LOG(f"Missing dependencies detected: {', '.join(missing_pkgs)}", "WARNING")
         return False
     return True
+
 DEPENDENCIES_OK = _check_and_install_dependencies()
 if not DEPENDENCIES_OK:
     LOG("Some dependencies are missing. Limited functionality will be available.", "WARNING")
+
 MODEL_REGISTRY = {
     "birefnet-general": {"name": "BiRefNet General", "size_mb": 98, "description": "State-of-the-art general purpose. Excellent for hair, glass, complex edges.", "source": "ZhengPeng7/BiRefNet", "type": "birefnet"},
     "birefnet-portrait": {"name": "BiRefNet Portrait", "size_mb": 98, "description": "Optimized for human portraits. Superior hair and skin edge detection.", "source": "ZhengPeng7/BiRefNet", "type": "birefnet"},
@@ -160,22 +184,26 @@ MODEL_REGISTRY = {
     "u2net_human_seg": {"name": "U2Net Human Segmentation", "size_mb": 176, "description": "Specialized for human figure segmentation.", "source": "rembg", "type": "u2net"},
     "silueta": {"name": "Silueta", "size_mb": 43, "description": "Lightweight and fast. Good for simple subjects.", "source": "rembg", "type": "u2net"}
 }
+
 def _safe_import(module_name: str) -> Optional[Any]:
     try:
         return importlib.import_module(module_name)
     except ImportError:
         return None
+
 def _get_model_cache_dir() -> Path:
     script_dir = Path(__file__).parent.resolve()
     cache_dir = script_dir / "model"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
+
 def _compute_file_hash(filepath: Path, algorithm: str = "sha256") -> str:
     hash_func = hashlib.new(algorithm)
     with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             hash_func.update(chunk)
     return hash_func.hexdigest()
+
 class ImagePreprocessor:
     @staticmethod
     def enhance_image(image: Image.Image) -> Image.Image:
@@ -190,6 +218,7 @@ class ImagePreprocessor:
         except Exception as e:
             LOG(f"Image enhancement failed: {e}", "WARNING")
             return image
+    
     @staticmethod
     def denoise_image(image: Image.Image) -> Image.Image:
         if not CV2_AVAILABLE:
@@ -201,12 +230,14 @@ class ImagePreprocessor:
         except Exception as e:
             LOG(f"Denoising failed: {e}", "WARNING")
             return image
+    
     @staticmethod
     def auto_orient(image: Image.Image) -> Image.Image:
         try:
             return ImageOps.exif_transpose(image)
         except Exception:
             return image
+
 class EdgeRefiner:
     @staticmethod
     def refine_alpha(alpha: Image.Image, original: Image.Image, iterations: int = 3) -> Image.Image:
@@ -227,11 +258,12 @@ class EdgeRefiner:
                 eroded = cv2.erode(alpha_float, kernel, iterations=1)
                 dilated = cv2.dilate(alpha_float, kernel, iterations=1)
                 alpha_float = (alpha_float + eroded + dilated) / 3.0
-                alpha_refined = (alpha_float * 255).astype(np.uint8)
-                return Image.fromarray(alpha_refined, mode='L')
+            alpha_refined = (alpha_float * 255).astype(np.uint8)
+            return Image.fromarray(alpha_refined, mode='L')
         except Exception as e:
             LOG(f"Edge refinement failed: {e}", "WARNING")
             return alpha
+    
     @staticmethod
     def matting_refinement(image: Image.Image, alpha: Image.Image) -> Image.Image:
         if not CV2_AVAILABLE:
@@ -250,6 +282,7 @@ class EdgeRefiner:
         except Exception as e:
             LOG(f"Matting refinement failed: {e}", "WARNING")
             return alpha
+
 class BackgroundRemoverEngine:
     def __init__(self):
         self._session = None
@@ -257,6 +290,7 @@ class BackgroundRemoverEngine:
         self._model_lock = threading.Lock()
         self._cache_dir = _get_model_cache_dir()
         LOG("BackgroundRemoverEngine initialized", "INFO")
+    
     def load_model(self, model_name: str) -> bool:
         with self._model_lock:
             try:
@@ -272,7 +306,8 @@ class BackgroundRemoverEngine:
                 LOG(f"Failed to load model '{model_name}': {e}", "ERROR")
                 traceback.print_exc()
                 return False
-    def remove_background(self, input_path: Path, output_path: Path, 
+    
+    def remove_background(self, input_path: Path, output_path: Path,
                          refine_edges: bool = True, enhance_image: bool = True,
                          denoise: bool = False) -> bool:
         if not REMBG_AVAILABLE:
@@ -285,7 +320,7 @@ class BackgroundRemoverEngine:
             LOG(f"Processing: {input_path.name}", "INFO")
             with open(input_path, 'rb') as f:
                 input_data = f.read()
-            output_data = remove(input_data, session=self._session, 
+            output_data = remove(input_data, session=self._session,
                                 alpha_matting=refine_edges,
                                 alpha_matting_foreground_threshold=240,
                                 alpha_matting_background_threshold=10,
@@ -314,6 +349,7 @@ class BackgroundRemoverEngine:
             LOG(f"Failed to process {input_path.name}: {e}", "ERROR")
             traceback.print_exc()
             return False
+
 class ModernUI:
     def __init__(self, engine: BackgroundRemoverEngine):
         self.engine = engine
@@ -329,20 +365,22 @@ class ModernUI:
         self.select_btn_tk = None
         self._setup_ui()
         LOG("ModernUI initialized", "INFO")
+    
     def _setup_ui(self):
         if CTK_AVAILABLE:
             self._setup_ctk_ui()
         else:
             self._setup_tk_ui()
-        self._update_log_display()
         threading.Thread(target=self._model_loader, daemon=True).start()
+    
     def _setup_ctk_ui(self):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
         self.root = ctk.CTk()
         self.root.title("Background Remover Pro · AI Powered")
-        self.root.geometry("800x700")
-        self.root.minsize(700, 600)
+        self.root.geometry("650x500")
+        self.root.minsize(600, 450)
+        self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         self.main_frame = ctk.CTkFrame(self.root)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -352,13 +390,14 @@ class ModernUI:
         self._create_options_section()
         self._create_output_section()
         self._create_progress_section()
-        self._create_log_section()
         self._create_action_buttons()
+    
     def _setup_tk_ui(self):
         self.root = tk.Tk()
         self.root.title("Background Remover Pro")
-        self.root.geometry("800x650")
-        self.root.minsize(700, 550)
+        self.root.geometry("650x500")
+        self.root.minsize(600, 450)
+        self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         self.root.configure(bg='#f0f0f0')
         style = ttk.Style()
@@ -371,248 +410,209 @@ class ModernUI:
         self._create_options_section_tk()
         self._create_output_section_tk()
         self._create_progress_section_tk()
-        self._create_log_section_tk()
         self._create_action_buttons_tk()
+    
     def _create_header(self):
         header_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         header_frame.pack(fill="x", pady=(0, 10))
-        title = ctk.CTkLabel(header_frame, text="Background Remover Pro", font=ctk.CTkFont(size=24, weight="bold"))
+        title = ctk.CTkLabel(header_frame, text="Background Remover Pro", font=ctk.CTkFont(size=18, weight="bold"))
         title.pack(side="left")
-        subtitle = ctk.CTkLabel(header_frame, text="AI-Powered · State-of-the-Art", font=ctk.CTkFont(size=12), text_color="gray")
-        subtitle.pack(side="left", padx=10)
-        status_indicator = ctk.CTkLabel(header_frame, text="●", text_color="green", font=ctk.CTkFont(size=16))
-        status_indicator.pack(side="right")
-        self.status_label = ctk.CTkLabel(header_frame, text="Initializing AI...", font=ctk.CTkFont(size=11), text_color="yellow")
-        self.status_label.pack(side="right", padx=5)
+    
     def _create_model_section(self):
         model_frame = ctk.CTkFrame(self.main_frame)
         model_frame.pack(fill="x", pady=(0, 10))
-        model_label = ctk.CTkLabel(model_frame, text="AI Model: ", font=ctk.CTkFont(size=12, weight="bold"))
+        model_label = ctk.CTkLabel(model_frame, text="Model:", font=ctk.CTkFont(size=12))
         model_label.grid(row=0, column=0, padx=10, pady=10, sticky="w")
         model_names = list(MODEL_REGISTRY.keys())
         model_display = [f"{MODEL_REGISTRY[m]['name']} ({MODEL_REGISTRY[m]['size_mb']}MB)" for m in model_names]
         self.model_var = ctk.StringVar(value=model_display[0])
-        self.model_menu = ctk.CTkOptionMenu(model_frame, values=model_display, variable=self.model_var, command=self._on_model_change, width=250)
+        self.model_menu = ctk.CTkOptionMenu(model_frame, values=model_display, variable=self.model_var, command=self._on_model_change, width=200)
         self.model_menu.grid(row=0, column=1, padx=10, pady=10, sticky="w")
-        self.model_desc_label = ctk.CTkLabel(model_frame, text=" ", font=ctk.CTkFont(size=10), text_color="gray")
-        self.model_desc_label.grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
-        self._update_model_description()
+        model_frame.columnconfigure(1, weight=1)
+    
     def _create_file_section(self):
         file_frame = ctk.CTkFrame(self.main_frame)
         file_frame.pack(fill="x", pady=(0, 10))
-        self.select_btn = ctk.CTkButton(file_frame, text="Select Images", command=self._select_files, width=120, height=32, state="disabled")
+        self.select_btn = ctk.CTkButton(file_frame, text="📂 Pilih Gambar", command=self._select_files, width=120, height=32, state="disabled")
         self.select_btn.grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        self.file_count_label = ctk.CTkLabel(file_frame, text="No files selected", font=ctk.CTkFont(size=11))
+        self.file_count_label = ctk.CTkLabel(file_frame, text="0 file dipilih", font=ctk.CTkFont(size=11))
         self.file_count_label.grid(row=0, column=1, padx=10, pady=10, sticky="w")
-        self.file_list_frame = ctk.CTkScrollableFrame(file_frame, height=100)
-        self.file_list_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="ew")
         file_frame.columnconfigure(1, weight=1)
+    
     def _create_options_section(self):
         options_frame = ctk.CTkFrame(self.main_frame)
         options_frame.pack(fill="x", pady=(0, 10))
         self.refine_var = ctk.BooleanVar(value=True)
-        refine_check = ctk.CTkCheckBox(options_frame, text="Edge Refinement (Hair/Glass) ", variable=self.refine_var, command=lambda: setattr(self, 'refine_edges', self.refine_var.get()))
+        refine_check = ctk.CTkCheckBox(options_frame, text="Edge Refinement (Rambut/Kaca)", variable=self.refine_var, command=lambda: setattr(self, 'refine_edges', self.refine_var.get()))
         refine_check.grid(row=0, column=0, padx=10, pady=5, sticky="w")
         self.enhance_var = ctk.BooleanVar(value=True)
-        enhance_check = ctk.CTkCheckBox(options_frame, text="Auto Enhance (Sharpness/Contrast) ", variable=self.enhance_var, command=lambda: setattr(self, 'enhance_image', self.enhance_var.get()))
+        enhance_check = ctk.CTkCheckBox(options_frame, text="Auto Enhance (Tajam/Kontras)", variable=self.enhance_var, command=lambda: setattr(self, 'enhance_image', self.enhance_var.get()))
         enhance_check.grid(row=0, column=1, padx=10, pady=5, sticky="w")
         self.denoise_var = ctk.BooleanVar(value=False)
-        denoise_check = ctk.CTkCheckBox(options_frame, text="Denoise (AI Cleanup) ", variable=self.denoise_var, command=lambda: setattr(self, 'denoise', self.denoise_var.get()))
+        denoise_check = ctk.CTkCheckBox(options_frame, text="Denoise (AI Cleanup)", variable=self.denoise_var, command=lambda: setattr(self, 'denoise', self.denoise_var.get()))
         denoise_check.grid(row=1, column=0, padx=10, pady=5, sticky="w")
+    
     def _create_output_section(self):
         output_frame = ctk.CTkFrame(self.main_frame)
         output_frame.pack(fill="x", pady=(0, 10))
-        output_label = ctk.CTkLabel(output_frame, text="Output Folder: ", font=ctk.CTkFont(size=12, weight="bold"))
+        output_label = ctk.CTkLabel(output_frame, text="Simpan ke:", font=ctk.CTkFont(size=12))
         output_label.grid(row=0, column=0, padx=10, pady=10, sticky="w")
         self.output_var = ctk.StringVar(value=str(self.output_dir))
-        output_entry = ctk.CTkEntry(output_frame, textvariable=self.output_var, width=350)
+        output_entry = ctk.CTkEntry(output_frame, textvariable=self.output_var, width=300)
         output_entry.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
-        browse_btn = ctk.CTkButton(output_frame, text="Browse", command=self._browse_output, width=80, height=32)
+        browse_btn = ctk.CTkButton(output_frame, text="Jelajahi", command=self._browse_output, width=80, height=32)
         browse_btn.grid(row=0, column=2, padx=10, pady=10)
         output_frame.columnconfigure(1, weight=1)
+    
     def _create_progress_section(self):
         progress_frame = ctk.CTkFrame(self.main_frame)
         progress_frame.pack(fill="x", pady=(0, 10))
         self.progress_bar = ctk.CTkProgressBar(progress_frame, width=400)
         self.progress_bar.pack(padx=10, pady=5, fill="x")
         self.progress_bar.set(0)
-        self.progress_label = ctk.CTkLabel(progress_frame, text=" ", font=ctk.CTkFont(size=10))
-        self.progress_label.pack(padx=10, pady=(0, 5))
-    def _create_log_section(self):
-        log_frame = ctk.CTkFrame(self.main_frame)
-        log_frame.pack(fill="both", expand=True, pady=(0, 10))
-        log_label = ctk.CTkLabel(log_frame, text="System Log: ", font=ctk.CTkFont(size=12, weight="bold"))
-        log_label.pack(anchor="w", padx=10, pady=(10, 5))
-        self.log_text = ctk.CTkTextbox(log_frame, height=150, font=ctk.CTkFont(size=10))
-        self.log_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.status_label = ctk.CTkLabel(progress_frame, text="Tunggu sebentar, model sedang dimuat...", font=ctk.CTkFont(size=10))
+        self.status_label.pack(padx=10, pady=(0, 5))
+    
     def _create_action_buttons(self):
         button_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        button_frame.pack(fill="x")
-        self.process_btn = ctk.CTkButton(button_frame, text="Submit", command=self._start_processing, width=150, height=40, font=ctk.CTkFont(size=14, weight="bold"), state="disabled")
+        button_frame.pack(fill="x", pady=(10, 0))
+        self.process_btn = ctk.CTkButton(button_frame, text="Mulai Jalankan", command=self._start_processing, width=150, height=40, font=ctk.CTkFont(size=14, weight="bold"), state="disabled")
         self.process_btn.pack(side="left", padx=5)
         clear_btn = ctk.CTkButton(button_frame, text="Clear All", command=self._clear_all, width=100, height=40, fg_color="gray")
         clear_btn.pack(side="left", padx=5)
+    
     def _create_header_tk(self):
         header_frame = ttk.Frame(self.main_frame)
         header_frame.pack(fill="x", pady=(0, 10))
         title = ttk.Label(header_frame, text="Background Remover Pro", font=('Segoe UI', 16, 'bold'))
         title.pack(side="left")
-        self.status_label_tk = ttk.Label(header_frame, text="Initializing AI...", font=('Segoe UI', 10))
-        self.status_label_tk.pack(side="right", padx=5)
-        status_canvas = tk.Canvas(header_frame, width=12, height=12, bg='#f0f0f0', highlightthickness=0)
-        self.status_indicator = status_canvas.create_oval(2, 2, 10, 10, fill='yellow', outline='')
-        status_canvas.pack(side="right")
+    
     def _create_model_section_tk(self):
-        model_frame = ttk.LabelFrame(self.main_frame, text="AI Model", padding="5")
+        model_frame = ttk.LabelFrame(self.main_frame, text="Model", padding="5")
         model_frame.pack(fill="x", pady=(0, 10))
-        ttk.Label(model_frame, text="Model: ").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(model_frame, text="Model:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         model_names = list(MODEL_REGISTRY.keys())
         model_display = [f"{MODEL_REGISTRY[m]['name']} ({MODEL_REGISTRY[m]['size_mb']}MB)" for m in model_names]
         self.model_var_tk = tk.StringVar(value=model_display[0])
-        self.model_menu_tk = ttk.Combobox(model_frame, textvariable=self.model_var_tk, values=model_display, state="readonly", width=40)
+        self.model_menu_tk = ttk.Combobox(model_frame, textvariable=self.model_var_tk, values=model_display, state="readonly", width=30)
         self.model_menu_tk.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
         self.model_menu_tk.bind('<<ComboboxSelected>>', self._on_model_change_tk)
-        self.model_desc_label_tk = ttk.Label(model_frame, text=" ", font=('Segoe UI', 9), foreground='gray')
-        self.model_desc_label_tk.grid(row=1, column=0, columnspan=2, padx=5, pady=(0,5), sticky="w")
         model_frame.columnconfigure(1, weight=1)
-        self._update_model_description_tk()
+    
     def _create_file_section_tk(self):
-        file_frame = ttk.LabelFrame(self.main_frame, text="Images", padding="5")
+        file_frame = ttk.LabelFrame(self.main_frame, text="Gambar", padding="5")
         file_frame.pack(fill="x", pady=(0, 10))
         btn_frame = ttk.Frame(file_frame)
         btn_frame.pack(fill="x", pady=2)
-        self.select_btn_tk = ttk.Button(btn_frame, text="Select Images", command=self._select_files, state="disabled")
+        self.select_btn_tk = ttk.Button(btn_frame, text="📂 Pilih Gambar", command=self._select_files, state="disabled")
         self.select_btn_tk.pack(side="left", padx=5)
-        self.file_count_label_tk = ttk.Label(btn_frame, text="No files selected")
+        self.file_count_label_tk = ttk.Label(btn_frame, text="0 file dipilih")
         self.file_count_label_tk.pack(side="left", padx=10)
-        list_frame = ttk.Frame(file_frame)
-        list_frame.pack(fill="x", pady=5)
-        self.file_listbox = tk.Listbox(list_frame, height=4, selectmode="extended")
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.file_listbox.yview)
-        self.file_listbox.configure(yscrollcommand=scrollbar.set)
-        self.file_listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+    
     def _create_options_section_tk(self):
-        options_frame = ttk.LabelFrame(self.main_frame, text="Options", padding="5")
+        options_frame = ttk.LabelFrame(self.main_frame, text="Opsi", padding="5")
         options_frame.pack(fill="x", pady=(0, 10))
         self.refine_var_tk = tk.BooleanVar(value=True)
-        refine_check = ttk.Checkbutton(options_frame, text="Edge Refinement (Hair/Glass) ", variable=self.refine_var_tk, command=lambda: setattr(self, 'refine_edges', self.refine_var_tk.get()))
+        refine_check = ttk.Checkbutton(options_frame, text="Edge Refinement (Rambut/Kaca)", variable=self.refine_var_tk, command=lambda: setattr(self, 'refine_edges', self.refine_var_tk.get()))
         refine_check.grid(row=0, column=0, padx=5, pady=2, sticky="w")
         self.enhance_var_tk = tk.BooleanVar(value=True)
-        enhance_check = ttk.Checkbutton(options_frame, text="Auto Enhance (Sharpness/Contrast) ", variable=self.enhance_var_tk, command=lambda: setattr(self, 'enhance_image', self.enhance_var_tk.get()))
+        enhance_check = ttk.Checkbutton(options_frame, text="Auto Enhance (Tajam/Kontras)", variable=self.enhance_var_tk, command=lambda: setattr(self, 'enhance_image', self.enhance_var_tk.get()))
         enhance_check.grid(row=0, column=1, padx=5, pady=2, sticky="w")
         self.denoise_var_tk = tk.BooleanVar(value=False)
-        denoise_check = ttk.Checkbutton(options_frame, text="Denoise (AI Cleanup) ", variable=self.denoise_var_tk, command=lambda: setattr(self, 'denoise', self.denoise_var_tk.get()))
+        denoise_check = ttk.Checkbutton(options_frame, text="Denoise (AI Cleanup)", variable=self.denoise_var_tk, command=lambda: setattr(self, 'denoise', self.denoise_var_tk.get()))
         denoise_check.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+    
     def _create_output_section_tk(self):
         output_frame = ttk.LabelFrame(self.main_frame, text="Output", padding="5")
         output_frame.pack(fill="x", pady=(0, 10))
-        ttk.Label(output_frame, text="Folder: ").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(output_frame, text="Simpan ke:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         self.output_var_tk = tk.StringVar(value=str(self.output_dir))
         output_entry = ttk.Entry(output_frame, textvariable=self.output_var_tk)
         output_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        browse_btn = ttk.Button(output_frame, text="Browse", command=self._browse_output)
+        browse_btn = ttk.Button(output_frame, text="Jelajahi", command=self._browse_output)
         browse_btn.grid(row=0, column=2, padx=5, pady=5)
         output_frame.columnconfigure(1, weight=1)
+    
     def _create_progress_section_tk(self):
         progress_frame = ttk.Frame(self.main_frame)
         progress_frame.pack(fill="x", pady=(0, 10))
         self.progress_bar_tk = ttk.Progressbar(progress_frame, mode='determinate')
         self.progress_bar_tk.pack(fill="x", padx=5, pady=2)
-        self.progress_label_tk = ttk.Label(progress_frame, text=" ")
-        self.progress_label_tk.pack(anchor="w", padx=5)
-    def _create_log_section_tk(self):
-        log_frame = ttk.LabelFrame(self.main_frame, text="System Log", padding="5")
-        log_frame.pack(fill="both", expand=True, pady=(0, 10))
-        self.log_text_tk = tk.Text(log_frame, height=8, wrap="word", font=('Consolas', 9))
-        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text_tk.yview)
-        self.log_text_tk.configure(yscrollcommand=scrollbar.set)
-        self.log_text_tk.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        self.status_label_tk = ttk.Label(progress_frame, text="Tunggu sebentar, model sedang dimuat...", font=('Segoe UI', 9))
+        self.status_label_tk.pack(anchor="w", padx=5)
+    
     def _create_action_buttons_tk(self):
         button_frame = ttk.Frame(self.main_frame)
-        button_frame.pack(fill="x")
-        self.process_btn_tk = ttk.Button(button_frame, text="Submit", command=self._start_processing, state="disabled")
+        button_frame.pack(fill="x", pady=(10, 0))
+        self.process_btn_tk = ttk.Button(button_frame, text="Mulai Jalankan", command=self._start_processing, state="disabled")
         self.process_btn_tk.pack(side="left", padx=5)
         clear_btn = ttk.Button(button_frame, text="Clear All", command=self._clear_all)
         clear_btn.pack(side="left", padx=5)
+    
     def _model_loader(self):
         success = self.engine.load_model(self.current_model)
         self.root.after(0, lambda: self._on_model_loaded(success))
+    
     def _on_model_loaded(self, success: bool):
         if CTK_AVAILABLE:
             if success:
                 self.select_btn.configure(state="normal")
                 self.process_btn.configure(state="normal")
-                self.status_label.configure(text="Ready", text_color="green")
+                self.status_label.configure(text="✅ Model siap digunakan!")
             else:
-                self.status_label.configure(text="Model Failed", text_color="red")
+                self.status_label.configure(text="❌ Gagal memuat model!", text_color="red")
         else:
             if success:
                 self.select_btn_tk.config(state="normal")
                 self.process_btn_tk.config(state="normal")
-                self.status_label_tk.config(text="Ready")
-                self.status_indicator.configure(fill='green')
+                self.status_label_tk.config(text="✅ Model siap digunakan!")
             else:
-                self.status_label_tk.config(text="Model Failed")
-                self.status_indicator.configure(fill='red')
+                self.status_label_tk.config(text="❌ Gagal memuat model!")
         LOG(f"Model '{self.current_model}' loaded and ready" if success else f"Failed to load model '{self.current_model}'", "INFO" if success else "ERROR")
+    
     def _on_model_change(self, choice):
         selected_display = choice
         for key, info in MODEL_REGISTRY.items():
             if info['name'] in selected_display:
                 self.current_model = key
                 break
-        self._update_model_description()
         self.process_btn.configure(state="disabled")
-        self.status_label.configure(text="Loading...", text_color="yellow")
+        self.status_label.configure(text="Memuat model AI...", text_color="yellow")
         threading.Thread(target=self._model_loader, daemon=True).start()
+    
     def _on_model_change_tk(self, event=None):
         selected_display = self.model_var_tk.get()
         for key, info in MODEL_REGISTRY.items():
             if info['name'] in selected_display:
                 self.current_model = key
                 break
-        self._update_model_description_tk()
         self.process_btn_tk.config(state="disabled")
-        self.status_label_tk.config(text="Loading...")
+        self.status_label_tk.config(text="Memuat model...")
         threading.Thread(target=self._model_loader, daemon=True).start()
-    def _update_model_description(self):
-        info = MODEL_REGISTRY.get(self.current_model, {})
-        desc = info.get('description', '')
-        self.model_desc_label.configure(text=desc)
-    def _update_model_description_tk(self):
-        info = MODEL_REGISTRY.get(self.current_model, {})
-        desc = info.get('description', '')
-        self.model_desc_label_tk.config(text=desc)
+    
     def _select_files(self):
-        filetypes = [("All Images", "*.jpg *.jpeg *.png *.webp *.bmp *.tiff *.tif"), ("JPEG", "*.jpg *.jpeg"), ("PNG", "*.png"), ("WEBP", "*.webp"), ("BMP", "*.bmp"), ("TIFF", "*.tiff *.tif")]
-        files = filedialog.askopenfilenames(title="Select Images for Background Removal", filetypes=filetypes)
+        filetypes = [("Semua Gambar", "*.jpg *.jpeg *.png *.webp *.bmp *.tiff *.tif"), ("JPEG", "*.jpg *.jpeg"), ("PNG", "*.png"), ("WEBP", "*.webp"), ("BMP", "*.bmp"), ("TIFF", "*.tiff *.tif")]
+        files = filedialog.askopenfilenames(title="Pilih Gambar untuk Dihapus background", filetypes=filetypes)
         if files:
             self.selected_files = [Path(f) for f in files]
             if CTK_AVAILABLE:
-                self.file_count_label.configure(text=f"{len(self.selected_files)} file(s) selected")
-                self._update_file_list()
+                self.file_count_label.configure(text=f"{len(self.selected_files)} file dipilih")
             else:
-                self.file_count_label_tk.config(text=f"{len(self.selected_files)} file(s) selected")
-                self._update_file_list_tk()
+                self.file_count_label_tk.config(text=f"{len(self.selected_files)} file dipilih")
             LOG(f"Selected {len(self.selected_files)} file(s)", "INFO")
-            self._start_processing()
-    def _update_file_list(self):
-        for widget in self.file_list_frame.winfo_children():
-            widget.destroy()
-        for f in self.selected_files[:10]:
-            label = ctk.CTkLabel(self.file_list_frame, text=f.name, font=ctk.CTkFont(size=10))
-            label.pack(anchor="w", padx=5, pady=2)
-        if len(self.selected_files) > 10:
-            label = ctk.CTkLabel(self.file_list_frame, text=f"... and {len(self.selected_files) - 10} more", font=ctk.CTkFont(size=10), text_color="gray")
-            label.pack(anchor="w", padx=5, pady=2)
-    def _update_file_list_tk(self):
-        self.file_listbox.delete(0, tk.END)
-        for f in self.selected_files:
-            self.file_listbox.insert(tk.END, f.name)
+            if len(files) == 1:
+                if CTK_AVAILABLE:
+                    self.status_label.configure(text=f"📄 {Path(files[0]).name}")
+                else:
+                    self.status_label_tk.config(text=f"📄 {Path(files[0]).name}")
+            else:
+                if CTK_AVAILABLE:
+                    self.status_label.configure(text=f"📁 {len(files)} file siap diproses.")
+                else:
+                    self.status_label_tk.config(text=f"📁 {len(files)} file siap diproses.")
+    
     def _browse_output(self):
-        folder = filedialog.askdirectory(title="Select Output Folder")
+        folder = filedialog.askdirectory(title="Pilih Folder Penyimpanan")
         if folder:
             self.output_dir = Path(folder)
             if CTK_AVAILABLE:
@@ -620,23 +620,27 @@ class ModernUI:
             else:
                 self.output_var_tk.set(str(self.output_dir))
             LOG(f"Output directory set to: {self.output_dir}", "INFO")
+    
     def _start_processing(self):
         if not self.selected_files:
-            self._show_error("No images selected", "Please select at least one image.")
+            self._show_error("Tidak ada gambar!", "Pilih minimal satu gambar terlebih dahulu.")
             return
         if not self.output_dir.exists():
-            self._show_error("Invalid output directory", "Please select a valid output folder.")
+            self._show_error("Folder tidak valid!", "Pilih folder penyimpanan yang valid.")
             return
         if self.processing:
             return
         self.processing = True
         if CTK_AVAILABLE:
-            self.process_btn.configure(state="disabled", text="Processing...")
+            self.process_btn.configure(state="disabled", text="Sedang Memproses...")
+            self.progress_bar.set(0)
+            self.progress_bar.configure(mode="determinate")
             self.progress_bar.set(0)
         else:
-            self.process_btn_tk.config(state="disabled", text="Processing...")
+            self.process_btn_tk.config(state="disabled", text="Sedang Memproses...")
             self.progress_bar_tk['value'] = 0
         threading.Thread(target=self._process_images, daemon=True).start()
+    
     def _process_images(self):
         total = len(self.selected_files)
         success = 0
@@ -644,13 +648,13 @@ class ModernUI:
         for idx, filepath in enumerate(self.selected_files):
             try:
                 progress_pct = (idx + 1) / total
-                status_msg = f"Processing {idx+1}/{total}: {filepath.name}"
+                status_msg = f"Memproses {idx+1}/{total}: {filepath.name}"
                 if CTK_AVAILABLE:
                     self.root.after(0, lambda p=progress_pct: self.progress_bar.set(p))
-                    self.root.after(0, lambda msg=status_msg: self.progress_label.configure(text=msg))
+                    self.root.after(0, lambda msg=status_msg: self.status_label.configure(text=msg))
                 else:
                     self.root.after(0, lambda p=int(progress_pct*100): self.progress_bar_tk.config(value=p))
-                    self.root.after(0, lambda msg=status_msg: self.progress_label_tk.config(text=msg))
+                    self.root.after(0, lambda msg=status_msg: self.status_label_tk.config(text=msg))
                 output_filename = f"{filepath.stem}_remover.png"
                 output_path = self.output_dir / output_filename
                 ok = self.engine.remove_background(filepath, output_path, refine_edges=self.refine_edges, enhance_image=self.enhance_image, denoise=self.denoise)
@@ -662,78 +666,74 @@ class ModernUI:
                 failed.append(f"{filepath.name}: {e}")
                 LOG(f"Exception processing {filepath.name}: {e}", "ERROR")
         self.root.after(0, lambda: self._processing_done(success, total, failed))
+    
     def _processing_done(self, success: int, total: int, failed: List[str]):
         self.processing = False
         if CTK_AVAILABLE:
-            self.process_btn.configure(state="normal", text="Submit")
-            self.progress_label.configure(text=" ")
+            self.process_btn.configure(state="normal", text="Mulai Jalankan")
+            self.status_label.configure(text=f"✅ Selesai. {success} dari {total} berhasil.")
+            self.progress_bar.set(0)
         else:
-            self.process_btn_tk.config(state="normal", text="Submit")
-            self.progress_label_tk.config(text=" ")
+            self.process_btn_tk.config(state="normal", text="Mulai Jalankan")
+            self.status_label_tk.config(text=f"✅ Selesai. {success} dari {total} berhasil.")
+            self.progress_bar_tk['value'] = 0
         LOG(f"Processing completed. Success: {success}/{total}", "INFO")
         if failed:
             LOG(f"Failed files: {failed}", "WARNING")
-            msg = f"Completed with errors.\n\nSuccess: {success}/{total}\n\nFailed:\n" + "\n".join(failed[:5])
+            msg = f"Berhasil: {success}/{total}\n\nGagal:\n" + "\n".join(failed[:5])
             if len(failed) > 5:
-                msg += f"\n... and {len(failed)-5} more"
-            self._show_error("Processing Completed", msg)
+                msg += f"\n... dan {len(failed)-5} error lainnya."
+            self._show_error("Beberapa File Gagal", msg)
         else:
-            self._show_info("Success", f"All {total} images processed successfully!\n\nSaved to:\n{self.output_dir}")
+            self._show_info("Sukses!", f"Semua {total} gambar berhasil diproses.\n\nHasil disimpan di:\n{self.output_dir}")
         self.selected_files = []
         if CTK_AVAILABLE:
-            self.file_count_label.configure(text="No files selected")
-            self._update_file_list()
+            self.file_count_label.configure(text="0 file dipilih")
         else:
-            self.file_count_label_tk.config(text="No files selected")
-            self._update_file_list_tk()
+            self.file_count_label_tk.config(text="0 file dipilih")
+    
     def _clear_all(self):
         self.selected_files = []
         if CTK_AVAILABLE:
-            self.file_count_label.configure(text="No files selected")
-            self._update_file_list()
+            self.file_count_label.configure(text="0 file dipilih")
+            self.status_label.configure(text="✅ Model siap digunakan!" if self.engine._session else "Tunggu sebentar, model sedang dimuat...")
         else:
-            self.file_count_label_tk.config(text="No files selected")
-            self._update_file_list_tk()
+            self.file_count_label_tk.config(text="0 file dipilih")
+            self.status_label_tk.config(text="✅ Model siap digunakan!" if self.engine._session else "Tunggu sebentar, model sedang dimuat...")
         LOG("Cleared all selections", "INFO")
-    def _update_log_display(self):
-        try:
-            while not self.log_queue.empty():
-                msg, level = self.log_queue.get_nowait()
-                if CTK_AVAILABLE:
-                    self.log_text.insert("end", f"[{level}] {msg}\n")
-                else:
-                    self.log_text_tk.insert("end", f"[{level}] {msg}\n")
-            if CTK_AVAILABLE:
-                self.log_text.see("end")
-            else:
-                self.log_text_tk.see("end")
-        except:
-            pass
-        self.root.after(500, self._update_log_display)
+    
     def _on_closing(self):
         LOG("Application shutting down", "INFO")
         self.root.destroy()
+    
     def _show_error(self, title: str, message: str):
         messagebox.showerror(title, message)
+    
     def _show_info(self, title: str, message: str):
         messagebox.showinfo(title, message)
+    
     def run(self):
         self.root.mainloop()
+
 class Application:
     def __init__(self):
         self.engine = BackgroundRemoverEngine()
         self.ui = ModernUI(self.engine)
         LOG("Application fully initialized", "INFO")
+    
     def run(self):
         self.ui.run()
+
 def _signal_handler(signum, frame):
     LOG(f"Received signal {signum}, shutting down gracefully", "INFO")
     sys.exit(0)
+
 signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
+
 def main():
     try:
-        LOG(f"Starting Background Remover Pro v2.0.0", "INFO")
+        LOG(f"Starting Background Remover Pro v2.2.5.1", "INFO")
         LOG(f"Python: {sys.version}", "INFO")
         LOG(f"Platform: {sys.platform}", "INFO")
         LOG(f"RemBG available: {REMBG_AVAILABLE}", "INFO")
@@ -746,5 +746,6 @@ def main():
         LOG(f"Fatal error in main: {e}", "CRITICAL")
         traceback.print_exc()
         sys.exit(1)
+
 if __name__ == "__main__":
     main()
